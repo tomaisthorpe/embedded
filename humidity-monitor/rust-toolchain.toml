@@ -1,0 +1,4 @@
+[toolchain]
+channel = "1.81"
+
+targets = ["thumbv6m-none-eabi"]
