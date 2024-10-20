@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use core::fmt::Write;
 use core::str::{self, FromStr};
 use cyw43::JoinOptions;
 use cyw43_pio::PioSpi;
@@ -40,6 +41,7 @@ async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'sta
 struct Config<'a> {
     ssid: &'a str,
     password: &'a str,
+    influxdb_url: &'a str,
 }
 
 fn parse_config() -> Option<Config<'static>> {
@@ -165,5 +167,16 @@ async fn connect_and_send(spawner: Spawner) {
     loop {
         let result = receiver.receive().await;
         info!("Received measurement: {:?}", result);
+
+        let mut payload: heapless::String<128> = heapless::String::new();
+        core::write!(
+            &mut payload,
+            "humidityMonitors,location=\"test\",humidity={},temperature={}",
+            result.humidity,
+            result.temperature,
+        )
+        .unwrap();
+
+        info!("Sending payload: {}", payload);
     }
 }

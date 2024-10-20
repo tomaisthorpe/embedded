@@ -1,4 +1,6 @@
 {
   "ssid": "ssid",
-  "password": "pass"
+  "password": "pass",
+  "influxdb_url": "",
+  "influxdb_token": ""
 }
