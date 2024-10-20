@@ -12,6 +12,8 @@ use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel;
 use embassy_time::Timer;
 use rand::RngCore;
 use serde::Deserialize;
@@ -51,10 +53,34 @@ fn parse_config() -> Option<Config<'static>> {
     }
 }
 
+#[derive(Debug, Format)]
+struct MeasurementResult {
+    temperature: f32,
+    humidity: f32,
+}
+
+static MEASUREMENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, MeasurementResult, 1> =
+    channel::Channel::new();
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     info!("Hello! Starting up...");
 
+    spawner.spawn(connect_and_send(spawner)).unwrap();
+
+    let sender = MEASUREMENT_CHANNEL.sender();
+    loop {
+        let result = MeasurementResult {
+            temperature: 25.0,
+            humidity: 50.0,
+        };
+        sender.send(result).await;
+        Timer::after_millis(1000).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn connect_and_send(spawner: Spawner) {
     let config = unwrap!(parse_config());
     info!("Connecting to: {}", config.ssid);
 
@@ -134,4 +160,10 @@ async fn main(spawner: Spawner) {
     info!("waiting for stack to be up...");
     stack.wait_config_up().await;
     info!("Stack is up!");
+
+    let receiver = MEASUREMENT_CHANNEL.receiver();
+    loop {
+        let result = receiver.receive().await;
+        info!("Received measurement: {:?}", result);
+    }
 }
