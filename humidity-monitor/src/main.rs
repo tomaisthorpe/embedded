@@ -7,6 +7,8 @@ use cyw43::JoinOptions;
 use cyw43_pio::PioSpi;
 use defmt::*;
 use embassy_executor::Spawner;
+use embassy_net::dns::DnsSocket;
+use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_net::{DhcpConfig, StackResources};
 use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::RoscRng;
@@ -16,8 +18,11 @@ use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel;
 use embassy_time::Timer;
+use heapless::String;
 use rand::RngCore;
-use serde::Deserialize;
+use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
+use reqwless::request::{Method, RequestBuilder};
+use serde::{Deserialize, Serialize};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _, serde_json_core};
 
@@ -41,7 +46,14 @@ async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'sta
 struct Config<'a> {
     ssid: &'a str,
     password: &'a str,
-    influxdb_url: &'a str,
+    token: &'a str,
+    thingsboard_url: &'a str,
+}
+
+#[derive(Serialize)]
+struct Payload {
+    temperature: f32,
+    humidity: f32,
 }
 
 fn parse_config() -> Option<Config<'static>> {
@@ -168,15 +180,48 @@ async fn connect_and_send(spawner: Spawner) {
         let result = receiver.receive().await;
         info!("Received measurement: {:?}", result);
 
-        let mut payload: heapless::String<128> = heapless::String::new();
+        let mut url: heapless::String<128> = heapless::String::new();
         core::write!(
-            &mut payload,
-            "humidityMonitors,location=\"test\",humidity={},temperature={}",
-            result.humidity,
-            result.temperature,
+            &mut url,
+            "{}/api/v1/{}/telemetry",
+            config.thingsboard_url,
+            config.token,
         )
         .unwrap();
 
-        info!("Sending payload: {}", payload);
+        let test = Payload {
+            temperature: 25.0,
+            humidity: 50.0,
+        };
+
+        let payload: String<128> = serde_json_core::ser::to_string(&test).unwrap();
+
+        let mut rx_buffer = [0; 8192];
+        let mut tls_read_buffer = [0; 16640];
+        let mut tls_write_buffer = [0; 16640];
+
+        let client_state = TcpClientState::<1, 4096, 4096>::new();
+        let tcp_client = TcpClient::new(stack, &client_state);
+        let dns_client = DnsSocket::new(stack);
+        let tls_config = TlsConfig::new(
+            seed,
+            &mut tls_read_buffer,
+            &mut tls_write_buffer,
+            TlsVerify::None,
+        );
+
+        let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
+
+        info!("Sending data to Thingsboard");
+
+        let mut _request = http_client
+            .request(Method::POST, &url)
+            .await
+            .unwrap()
+            .headers(&[("Content-Type", "application/json")])
+            .body(payload.as_bytes())
+            .send(&mut rx_buffer)
+            .await
+            .unwrap();
     }
 }
