@@ -10,11 +10,12 @@ use embassy_executor::Spawner;
 use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_net::{DhcpConfig, StackResources};
-use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::RoscRng;
-use embassy_rp::gpio::{Level, Output};
+use embassy_rp::gpio::{AnyPin, Level, Output, Pin};
+use embassy_rp::i2c;
 use embassy_rp::peripherals::{DMA_CH0, PIO0};
-use embassy_rp::pio::{InterruptHandler, Pio};
+use embassy_rp::pio::{InterruptHandler, Pio, PioPin};
+use embassy_rp::{bind_interrupts, Peripheral, PeripheralRef};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel;
 use embassy_time::Timer;
@@ -22,6 +23,7 @@ use heapless::String;
 use rand::RngCore;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
 use reqwless::request::{Method, RequestBuilder};
+use sensirion_rht::{Addr, Device, Repeatability};
 use serde::{Deserialize, Serialize};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _, serde_json_core};
@@ -52,8 +54,8 @@ struct Config<'a> {
 
 #[derive(Serialize)]
 struct Payload {
-    temperature: f32,
-    humidity: f32,
+    temperature: f64,
+    humidity: f64,
 }
 
 fn parse_config() -> Option<Config<'static>> {
@@ -69,51 +71,77 @@ fn parse_config() -> Option<Config<'static>> {
 
 #[derive(Debug, Format)]
 struct MeasurementResult {
-    temperature: f32,
-    humidity: f32,
+    temperature: f64,
+    humidity: f64,
 }
 
 static MEASUREMENT_CHANNEL: channel::Channel<CriticalSectionRawMutex, MeasurementResult, 1> =
     channel::Channel::new();
 
+struct Pins {
+    pwr: PeripheralRef<'static, AnyPin>,
+    cs: PeripheralRef<'static, AnyPin>,
+    pio: PeripheralRef<'static, PIO0>,
+
+    dma: PeripheralRef<'static, DMA_CH0>,
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     info!("Hello! Starting up...");
 
-    spawner.spawn(connect_and_send(spawner)).unwrap();
+    let p = embassy_rp::init(Default::default());
+
+    let pwr_pin = AnyPin::from(p.PIN_23).into_ref();
+    let cs_pin = AnyPin::from(p.PIN_25).into_ref();
+
+    spawner
+        .spawn(connect_and_send(
+            spawner,
+            Pins {
+                pwr: pwr_pin,
+                cs: cs_pin,
+                pio: p.PIO0.into_ref(),
+                dma: p.DMA_CH0.into_ref(),
+            },
+            p.PIN_24,
+            p.PIN_29,
+        ))
+        .unwrap();
 
     let sender = MEASUREMENT_CHANNEL.sender();
+
+    let sda = p.PIN_4;
+    let scl = p.PIN_5;
+    let i2c = i2c::I2c::new_blocking(p.I2C0, scl, sda, embassy_rp::i2c::Config::default());
+
+    let mut sensor = Device::new_sht3x(Addr::A, i2c, embassy_time::Delay);
     loop {
-        let result = MeasurementResult {
-            temperature: 25.0,
-            humidity: 50.0,
-        };
-        sender.send(result).await;
-        Timer::after_millis(1000).await;
+        if let Ok((temperature, humidity)) = sensor.single_shot(Repeatability::High) {
+            let result = MeasurementResult {
+                temperature: temperature.as_celsius(),
+                humidity: humidity.as_percent(),
+            };
+
+            sender.send(result).await;
+        }
+
+        Timer::after_millis(5000).await;
     }
 }
 
 #[embassy_executor::task]
-async fn connect_and_send(spawner: Spawner) {
+async fn connect_and_send(spawner: Spawner, pins: Pins, p24: impl PioPin, p29: impl PioPin) {
     let config = unwrap!(parse_config());
     info!("Connecting to: {}", config.ssid);
 
-    let p = embassy_rp::init(Default::default());
     let fw = include_bytes!("../../cyw43-firmware/43439A0.bin");
     let clm = include_bytes!("../../cyw43-firmware/43439A0_clm.bin");
 
-    let pwr = Output::new(p.PIN_23, Level::Low);
-    let cs = Output::new(p.PIN_25, Level::High);
-    let mut pio = Pio::new(p.PIO0, Irqs);
-    let spi = PioSpi::new(
-        &mut pio.common,
-        pio.sm0,
-        pio.irq0,
-        cs,
-        p.PIN_24,
-        p.PIN_29,
-        p.DMA_CH0,
-    );
+    let pwr = Output::new(pins.pwr, Level::Low);
+    let cs = Output::new(pins.cs, Level::High);
+    let mut pio = Pio::new(pins.pio, Irqs);
+    let spi = PioSpi::new(&mut pio.common, pio.sm0, pio.irq0, cs, p24, p29, pins.dma);
 
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let state = STATE.init(cyw43::State::new());
@@ -190,8 +218,8 @@ async fn connect_and_send(spawner: Spawner) {
         .unwrap();
 
         let test = Payload {
-            temperature: 25.0,
-            humidity: 50.0,
+            temperature: result.temperature,
+            humidity: result.humidity,
         };
 
         let payload: String<128> = serde_json_core::ser::to_string(&test).unwrap();
