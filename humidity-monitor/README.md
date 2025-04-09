@@ -1,6 +1,9 @@
-# Humidity Monitor
+# Humidity Monitor 🚧
 
 A Rust-based humidity monitor using a Raspberry Pi Pico W and Sensirion SHT3x sensor. This project uses the Embassy async runtime framework for efficient embedded programming.
+
+![Photo of the Pico W on the carrier board with the sensor on the back](./board-only.png)
+Photo of the Pico W on the carrier board with the sensor on the back.
 
 ## Features
 - Real-time humidity and temperature monitoring using a Sensirion SHT3x
