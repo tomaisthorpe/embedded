@@ -7,8 +7,16 @@ This repository serves as a centralised collection of my IoT and embedded hardwa
 - [ThingsBoard](https://github.com/thingsboard/thingsboard) as an IoT platform
 - Embedded Rust with [Embassy](https://github.com/embassy-rs/embassy) 
 
+## Project Status Legend
+| Status | Description |
+|--------|-------------|
+| ✅ | Completed and stable |
+| 🚧 | Work in progress |
+| 🧪 | Experimental / Proof of concept |
+| 📝 | Planned / Not started |
+
 ## Projects
 
-### [Humidity Monitor](./humidity-monitor/)
+### [Humidity Monitor](./humidity-monitor/) 🚧
 - Small device to measure and log humidity and temperature data, publishing to ThingsBoard for monitoring.
 - Hardware: Raspberry Pico W (RP2040), SHT3x sensor
