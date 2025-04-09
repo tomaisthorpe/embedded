@@ -10,6 +10,11 @@ Photo of the Pico W on the carrier board with the sensor on the back.
 - WiFi connectivity using the Raspberry Pi Pico W's built in CYW43439 chip
 - JSON-based configuration
 
+## TODO
+- [ ] Design 3D printed case
+- [ ] Continue testing for long term reliability
+- [ ] Measure current usage, potentially for battery powered version
+
 ## Hardware Requirements
 - Raspberry Pi Pico W
 - Sensirion SHT3x
